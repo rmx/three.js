@@ -963,16 +963,17 @@ def position(bone, frame, action, armatureMatrix):
 
     if ngroups > 0:
 
-        index = 0
+        index = -1
 
         for i in range(ngroups):
             if action.groups[i].name == bone.name:
                 index = i
 
-        for channel in action.groups[index].channels:
-            if "location" in channel.data_path:
-                hasChanged = handle_position_channel(channel, frame, position)
-                change = change or hasChanged
+        if index > -1:
+            for channel in action.groups[index].channels:
+                if "location" in channel.data_path:
+                    hasChanged = handle_position_channel(channel, frame, position)
+                    change = change or hasChanged
 
     else:
 
