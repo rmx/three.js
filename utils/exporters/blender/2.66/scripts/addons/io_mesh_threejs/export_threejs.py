@@ -845,7 +845,7 @@ def generate_indices_and_weights(meshes, option_skinning):
 # (only the first action will exported)
 # ##############################################################################
 
-def generate_animation(option_animation_skeletal, option_frame_step, flipyz):
+def generate_animation(option_animation_skeletal, option_frame_step, flipyz, option_frame_index_as_time):
 
     if not option_animation_skeletal or len(bpy.data.actions) == 0:
         return ""
@@ -870,6 +870,8 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz):
 
     frame_length = end_frame - start_frame
 
+    used_frames = int(frame_length / option_frame_step) + 1
+
     TEMPLATE_KEYFRAME_FULL  = '{"time":%g,"pos":[%g,%g,%g],"rot":[%g,%g,%g,%g],"scl":[1,1,1]}'
     TEMPLATE_KEYFRAME       = '{"time":%g,"pos":[%g,%g,%g],"rot":[%g,%g,%g,%g]}'
     TEMPLATE_KEYFRAME_POS   = '{"time":%g,"pos":[%g,%g,%g]}'
@@ -879,10 +881,21 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz):
 
         keys = []
 
-        for frame in range(int(start_frame), int(end_frame / option_frame_step) + 1):
+        for frame_i in range(0, used_frames):
 
-            pos, pchange = position(hierarchy, frame * option_frame_step, action, armatureMat)
-            rot, rchange = rotation(hierarchy, frame * option_frame_step, action, armatureRotMat)
+            # Compute the index of the current frame (snap the last index to the end)
+            frame = start_frame + frame_i * option_frame_step
+            if frame_i == used_frames-1:
+                frame = end_frame
+
+            # Compute the time of the frame
+            if option_frame_index_as_time:
+                time = frame - start_frame
+            else:
+                time = (frame - start_frame) / fps
+
+            pos, pchange = position(hierarchy, frame, action, armatureMat)
+            rot, rchange = rotation(hierarchy, frame, action, armatureRotMat)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
@@ -893,25 +906,21 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz):
 
             # START-FRAME: needs pos, rot and scl attributes (required frame)
 
-            if frame == int(start_frame):
+            if frame == start_frame:
 
-                time = (frame * option_frame_step - start_frame) / fps
                 keyframe = TEMPLATE_KEYFRAME_FULL % (time, px, py, pz, rx, ry, rz, rw)
                 keys.append(keyframe)
 
             # END-FRAME: needs pos, rot and scl attributes with animation length (required frame)
 
-            elif frame == int(end_frame / option_frame_step):
+            elif frame == end_frame:
 
-                time = frame_length / fps
                 keyframe = TEMPLATE_KEYFRAME_FULL % (time, px, py, pz, rx, ry, rz, rw)
                 keys.append(keyframe)
 
             # MIDDLE-FRAME: needs only one of the attributes, can be an empty frame (optional frame)
 
             elif pchange == True or rchange == True:
-
-                time = (frame * option_frame_step - start_frame) / fps
 
                 if pchange == True and rchange == True:
                     keyframe = TEMPLATE_KEYFRAME % (time, px, py, pz, rx, ry, rz, rw)
@@ -928,7 +937,11 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz):
         parents.append(parent)
 
     hierarchy_string = ",".join(parents)
-    animation_string = '"name":"%s","fps":%d,"length":%g,"hierarchy":[%s]' % (action.name, fps, (frame_length / fps), hierarchy_string)
+    if option_frame_index_as_time:
+        length = frame_length
+    else:
+        length = frame_length / fps
+    animation_string = '"name":"%s","fps":%d,"length":%g,"hierarchy":[%s]' % (action.name, fps, length, hierarchy_string)
 
     return animation_string
 
@@ -1291,7 +1304,8 @@ def generate_ascii_model(meshes, morphs,
                          filepath,
                          option_animation_morph,
                          option_animation_skeletal,
-                         option_frame_step):
+                         option_frame_step,
+                         option_frame_index_as_time):
 
     vertices = []
 
@@ -1391,7 +1405,7 @@ def generate_ascii_model(meshes, morphs,
     "bones"     : bones_string,
     "indices"   : indices_string,
     "weights"   : weights_string,
-    "animation" : generate_animation(option_animation_skeletal, option_frame_step, flipyz)
+    "animation" : generate_animation(option_animation_skeletal, option_frame_step, flipyz, option_frame_index_as_time)
     }
 
     text = TEMPLATE_FILE_ASCII % {
@@ -1474,7 +1488,8 @@ def generate_mesh_string(objects, scene,
                 filepath,
                 option_animation_morph,
                 option_animation_skeletal,
-                option_frame_step):
+                option_frame_step,
+                option_frame_index_as_time):
 
     meshes = extract_meshes(objects, scene, export_single_model, option_scale, flipyz)
 
@@ -1538,7 +1553,8 @@ def generate_mesh_string(objects, scene,
                                 filepath,
                                 option_animation_morph,
                                 option_animation_skeletal,
-                                option_frame_step)
+                                option_frame_step,
+                                option_frame_index_as_time)
 
     # remove temp meshes
 
@@ -1565,7 +1581,8 @@ def export_mesh(objects,
                 option_copy_textures,
                 option_animation_morph,
                 option_animation_skeletal,
-                option_frame_step):
+                option_frame_step,
+                option_frame_index_as_time):
 
     """Export single mesh"""
 
@@ -1588,7 +1605,8 @@ def export_mesh(objects,
                 filepath,
                 option_animation_morph,
                 option_animation_skeletal,
-                option_frame_step)
+                option_frame_step,
+                option_frame_index_as_time)
 
     write_file(filepath, text)
 
@@ -2325,7 +2343,8 @@ def save(operator, context, filepath = "",
          option_animation_morph = False,
          option_animation_skeletal = False,
          option_frame_step = 1,
-         option_all_meshes = True):
+         option_all_meshes = True,
+         option_frame_index_as_time = False):
 
     #print("URL TYPE", option_url_base_html)
 
@@ -2389,7 +2408,8 @@ def save(operator, context, filepath = "",
                                                         filepath,
                                                         option_animation_morph,
                                                         option_animation_skeletal,
-                                                        option_frame_step)
+                                                        option_frame_step,
+                                                        option_frame_index_as_time)
 
                         embeds[object.data.name] = model_string
 
@@ -2414,7 +2434,8 @@ def save(operator, context, filepath = "",
                                     option_copy_textures,
                                     option_animation_morph,
                                     option_animation_skeletal,
-                                    option_frame_step)
+                                    option_frame_step,
+                                    option_frame_index_as_time)
 
                     geo_set.add(name)
 
@@ -2447,6 +2468,7 @@ def save(operator, context, filepath = "",
                     option_copy_textures,
                     option_animation_morph,
                     option_animation_skeletal,
-                    option_frame_step)
+                    option_frame_step,
+                    option_frame_index_as_time)
 
     return {'FINISHED'}
