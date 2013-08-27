@@ -859,7 +859,7 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
         return "", 0
     armatureMat = armatureObject.matrix_world
     l,r,s = armatureMat.decompose()
-    armatureRotMat = r.to_matrix()
+    armatureQuaternion = r
 
     parents = []
     parent_index = -1
@@ -896,7 +896,7 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
                 time = (frame - start_frame) / fps
 
             pos, pchange = position(hierarchy, frame, action, armatureMat)
-            rot, rchange = rotation(hierarchy, frame, action, armatureRotMat)
+            rot, rchange = rotation(hierarchy, frame, action, armatureQuaternion)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
@@ -1047,7 +1047,7 @@ def handle_rotation_channel(channel, frame, rotation):
 
     return change
 
-def rotation(bone, frame, action, armatureMatrix):
+def rotation(bone, frame, action, armatureQuaternion):
 
     # TODO: calculate rotation also from rotation_euler channels
 
@@ -1087,7 +1087,7 @@ def rotation(bone, frame, action, armatureMatrix):
 
     rot3 = rotation.to_3d()
     rotation.xyz = rot3 * bone.matrix_local.inverted()
-    rotation.xyz = armatureMatrix * rotation.xyz
+    rotation.rotate(armatureQuaternion)
 
     return rotation, change
 
