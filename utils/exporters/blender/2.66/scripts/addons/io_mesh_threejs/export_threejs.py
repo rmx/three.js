@@ -731,29 +731,30 @@ def generate_bones(option_bones, flipyz):
         return "", 0
 
     hierarchy = []
+    armature_matrix = armatureObject.matrix_world
 
     TEMPLATE_BONE = '{"parent":%d,"name":"%s","pos":[%g,%g,%g],"rotq":[0,0,0,1]}'
 
     for bone in armature.bones:
-        bonePos = None
+        bonePos = armature_matrix * bone.head_local
         boneIndex = None
         if bone.parent == None:
-            bonePos = bone.head_local
+            parentPos = mathutils.Vector((0,0,0))
             boneIndex = -1
         else:
-            bonePos = bone.head_local - bone.parent.head_local
+            parentPos = armature_matrix * bone.parent.head_local
             boneIndex = i = 0
             for parent in armature.bones:
                 if parent.name == bone.parent.name:
                     boneIndex = i
                 i += 1
 
-        bonePosWorld = armatureObject.matrix_world * bonePos
+        pos = bonePos - parentPos
         if flipyz:
-            joint = TEMPLATE_BONE % (boneIndex, bone.name, bonePosWorld.x, bonePosWorld.z, -bonePosWorld.y)
+            joint = TEMPLATE_BONE % (boneIndex, bone.name, pos.x, pos.z, -pos.y)
             hierarchy.append(joint)
         else:
-            joint = TEMPLATE_BONE % (boneIndex, bone.name, bonePosWorld.x, bonePosWorld.y, bonePosWorld.z)
+            joint = TEMPLATE_BONE % (boneIndex, bone.name, pos.x, pos.y, pos.z)
             hierarchy.append(joint)
                 
     bones_string = ",".join(hierarchy)
@@ -969,6 +970,7 @@ def handle_position_channel(channel, frame, position):
 
 def position(bone, frame, action, armatureMatrix):
 
+    # Position (in bone space, relative to bone rest position)
     position = mathutils.Vector((0,0,0))
     change = False
 
@@ -998,26 +1000,26 @@ def position(bone, frame, action, armatureMatrix):
                 hasChanged = handle_position_channel(channel, frame, position)
                 change = change or hasChanged
 
+    # Position (in armature space, relative to bone position)
     position = position * bone.matrix_local.inverted()
 
+    # Position (in armature space)
+    position = bone.head_local + position
+
+    # Position (in world space)
+    position = armatureMatrix * position
+
+    # Position of the parent (in world space)
     if bone.parent == None:
-
-        position.x += bone.head.x
-        position.y += bone.head.y
-        position.z += bone.head.z
-
+        parent_position = mathutils.Vector((0,0,0))
     else:
-
         parent = bone.parent
+        parent_position = armatureMatrix * bone.parent.head_local
 
-        parentInvertedLocalMatrix = parent.matrix_local.inverted()
-        parentHeadTailDiff = parent.tail_local - parent.head_local
+    # Position (in world space, relative to parent)
+    relative_position = position - parent_position
 
-        position.x += (bone.head * parentInvertedLocalMatrix).x + parentHeadTailDiff.x
-        position.y += (bone.head * parentInvertedLocalMatrix).y + parentHeadTailDiff.y
-        position.z += (bone.head * parentInvertedLocalMatrix).z + parentHeadTailDiff.z
-
-    return armatureMatrix*position, change
+    return relative_position, change
 
 def handle_rotation_channel(channel, frame, rotation):
 
