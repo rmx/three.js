@@ -1021,7 +1021,7 @@ def position(bone, frame, action, armatureMatrix):
 
     return relative_position, change
 
-def handle_rotation_channel(channel, frame, rotation):
+def handle_rotation_channel_quaternion(channel, frame, rotation):
 
     change = False
 
@@ -1047,13 +1047,37 @@ def handle_rotation_channel(channel, frame, rotation):
 
     return change
 
+def handle_rotation_channel_euler(channel, frame, rotation):
+
+    change = False
+
+    if channel.array_index in [0, 1, 2]:
+
+        for keyframe in channel.keyframe_points:
+            if keyframe.co[0] == frame:
+                change = True
+
+        value = channel.evaluate(frame)
+
+        if channel.array_index == 0:
+            rotation.x = value
+
+        elif channel.array_index == 1:
+            rotation.y = value
+
+        elif channel.array_index == 2:
+            rotation.z = value
+
+    return change
+
 def rotation(bone, frame, action, armatureQuaternion):
 
     # TODO: calculate rotation also from rotation_euler channels
 
-    rotation = mathutils.Vector((0,0,0,1))
-
-    change = False
+    rotation_quaternion = mathutils.Quaternion((0,0,0,1))
+    change_quaternion = False
+    rotation_euler = mathutils.Euler((0,0,0), 'XYZ')
+    change_euler = False
 
     ngroups = len(action.groups)
 
@@ -1070,8 +1094,11 @@ def rotation(bone, frame, action, armatureQuaternion):
         if index > -1:
             for channel in action.groups[index].channels:
                 if "quaternion" in channel.data_path:
-                    hasChanged = handle_rotation_channel(channel, frame, rotation)
-                    change = change or hasChanged
+                    hasChanged = handle_rotation_channel_quaternion(channel, frame, rotation_quaternion)
+                    change_quaternion = change_quaternion or hasChanged
+                elif "euler" in channel.data_path:
+                    hasChanged = handle_rotation_channel_euler(channel, frame, rotation_euler)
+                    change_euler = change_euler or hasChanged
 
     # animation in raw fcurves
 
@@ -1081,15 +1108,26 @@ def rotation(bone, frame, action, armatureQuaternion):
 
         for channel in action.fcurves:
             data_path = channel.data_path
-            if bone_label in data_path and "quaternion" in data_path:
-                hasChanged = handle_rotation_channel(channel, frame, rotation)
-                change = change or hasChanged
+            if bone_label in data_path:
+                if "quaternion" in data_path:
+                    hasChanged = handle_rotation_channel_quaternion(channel, frame, rotation_quaternion)
+                    change_quaternion = change_quaternion or hasChanged
+                elif "euler" in data_path:
+                    hasChanged = handle_rotation_channel_euler(channel, frame, rotation_euler)
+                    change_euler = change_euler or hasChanged
 
-    rot3 = rotation.to_3d()
-    rotation.xyz = rot3 * bone.matrix_local.inverted()
-    rotation.rotate(armatureQuaternion)
+    if change_euler and not change_quaternion:
+        rotation_quaternion = rotation_euler.to_quaternion()
+        change_quaternion = True
+    elif change_quaternion:
+        # Rotate from bone space to armature space
+        boneMatrix = bone.matrix_local.inverted()
+        rotation_quaternion.axis.rotate(boneMatrix)
 
-    return rotation, change
+    # Rotate from armature space to world space
+    rotation_quaternion.axis.rotate(armatureQuaternion)
+
+    return rotation_quaternion, change_quaternion
 
 # #####################################################
 # Model exporter - materials
