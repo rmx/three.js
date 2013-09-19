@@ -703,67 +703,67 @@ def generate_uvs(uv_layers, option_uv_coords):
 # ##############################################################################
 def get_armature():
 
-    objects = []
     armatures = []
 
     # Get a list of all objects that are affected by armatures
     for object in bpy.data.objects:
-        armature = object.find_armature()
-        if not armature is None:
-            objects.append(object)
+        if object.type == 'ARMATURE':
             armatures.append(object)
 
     # Return the first armature object (for now)
-    if len(objects) > 0:
-        return objects[0], armatures[0]
+    if len(armatures) > 0:
+        return armatures[0]
     else:
         print("Warning: no armature in the scene")
-        return None, None
+        return None
 
 # ##############################################################################
 # Model exporter - bones
 # (only the first armature will exported)
 # ##############################################################################
 
-def generate_bones(option_bones, flipyz):
+def generate_bones(meshes, option_bones, flipyz):
 
     if not option_bones:
         return "", 0
 
-    armature, armatureObject = get_armature()
-    if armature is None or armatureObject is None:
+    armature_object = get_armature()
+    if armature_object is None:
         return "", 0
 
     hierarchy = []
-    armature_matrix = armatureObject.matrix_world
+    armature_matrix = armature_object.matrix_world
+    pose_bones = armature_object.pose.bones
 
     TEMPLATE_BONE = '{"parent":%d,"name":"%s","pos":[%g,%g,%g],"rotq":[0,0,0,1]}'
 
-    for bone in armature.bones:
-        bonePos = armature_matrix * bone.head_local
+    for pose_bone in pose_bones:
+        armature_bone = pose_bone.bone
+        bonePos = armature_matrix * armature_bone.head_local
         boneIndex = None
-        if bone.parent == None:
+        if armature_bone.parent == None:
             parentPos = mathutils.Vector((0,0,0))
             boneIndex = -1
         else:
-            parentPos = armature_matrix * bone.parent.head_local
+            parentPos = armature_matrix * armature_bone.parent.head_local
             boneIndex = i = 0
-            for parent in armature.bones:
-                if parent.name == bone.parent.name:
+            for pose_parent in pose_bones:
+                armature_parent = pose_parent.bone
+                if armature_parent.name == armature_bone.parent.name:
                     boneIndex = i
                 i += 1
 
         pos = bonePos - parentPos
         if flipyz:
-            joint = TEMPLATE_BONE % (boneIndex, bone.name, pos.x, pos.z, -pos.y)
+            joint = TEMPLATE_BONE % (boneIndex, armature_bone.name, pos.x, pos.z, -pos.y)
             hierarchy.append(joint)
         else:
-            joint = TEMPLATE_BONE % (boneIndex, bone.name, pos.x, pos.y, pos.z)
+            joint = TEMPLATE_BONE % (boneIndex, armature_bone.name, pos.x, pos.y, pos.z)
             hierarchy.append(joint)
                 
     bones_string = ",".join(hierarchy)
 
-    return bones_string, len(armature.bones)
+    return bones_string, len(pose_bones)
 
 
 # ##############################################################################
@@ -777,8 +777,6 @@ def generate_indices_and_weights(meshes, option_skinning):
 
     indices = []
     weights = []
-
-    armature, armatureObject = get_armature()
 
     for mesh, object in meshes:
 
@@ -797,6 +795,11 @@ def generate_indices_and_weights(meshes, option_skinning):
             continue
 
         object = bpy.data.objects[mesh_index]
+
+        armature_object = object.find_armature()
+        if armature_object is None:
+            print("generate_indices: couldn't find armature for mesh", mesh.name)
+            continue
 
         for vertex in mesh.vertices:
 
@@ -823,8 +826,9 @@ def generate_indices_and_weights(meshes, option_skinning):
                     index = bone_proxy[0]
                     weight = bone_proxy[1]
 
-                    for j, bone in enumerate(armature.bones):
-                        if object.vertex_groups[index].name == bone.name:
+                    for j, pose_bone in enumerate(armature_object.pose.bones):
+                        armature_bone = pose_bone.bone
+                        if object.vertex_groups[index].name == armature_bone.name:
                             indices.append('%d' % j)
                             weights.append('%g' % weight)
                             found = 1
@@ -858,10 +862,10 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
     # TODO: Add scaling influences
 
     action = bpy.data.actions[0]
-    armature, armatureObject = get_armature()
-    if armature is None or armatureObject is None:
+    armature_object = get_armature()
+    if armature_object is None:
         return "", 0
-    armatureMat = armatureObject.matrix_world
+    armatureMat = armature_object.matrix_world
     l,r,s = armatureMat.decompose()
     armatureQuaternion = r
 
@@ -882,14 +886,15 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
     TEMPLATE_KEYFRAME_POS   = '{"time":%g,"pos":[%g,%g,%g]}'
     TEMPLATE_KEYFRAME_ROT   = '{"time":%g,"rot":[%g,%g,%g,%g]}'
 
-    for bone in armature.bones:
+    for pose_bone in armature_object.pose.bones:
 
+        armature_bone = pose_bone.bone
         keys = []
-        
-        channels_location    = find_channels(action, bone, "location")
-        channels_quaternion  = find_channels(action, bone, "quaternion")
-        channels_euler       = find_channels(action, bone, "euler")
-        channels_scale       = find_channels(action, bone, "scale")
+
+        channels_location    = find_channels(action, armature_bone, "location")
+        channels_quaternion  = find_channels(action, armature_bone, "rotation_quaternion")
+        channels_euler       = find_channels(action, armature_bone, "rotation_euler")
+        channels_scale       = find_channels(action, armature_bone, "scale")
 
         for frame_i in range(0, used_frames):
 
@@ -904,8 +909,8 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
             else:
                 time = (frame - start_frame) / fps
 
-            pos, pchange = position(bone, frame, action, armatureMat, channels_location)
-            rot, rchange = rotation(bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler)
+            pos, pchange = position(armature_bone, frame, action, armatureMat, channels_location)
+            rot, rchange = rotation(armature_bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
@@ -955,7 +960,8 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
 
     return animation_string
 
-def find_channels(action, bone_name, channel_type):
+def find_channels(action, bone, channel_type):
+    bone_name = bone.name
     ngroups = len(action.groups)
     result = []
 
@@ -970,7 +976,7 @@ def find_channels(action, bone_name, channel_type):
 
         # Get all desired channels in that group
         if group_index > -1:
-            for channel in action.groups[index].channels:
+            for channel in action.groups[group_index].channels:
                 if channel_type in channel.data_path:
                     result.append(channel)
 
@@ -983,6 +989,7 @@ def find_channels(action, bone_name, channel_type):
             data_path = channel.data_path
             if bone_label in data_path and channel_type in data_path:
                 result.append(channel)
+
     return result
 
 def find_keyframe_at(channel, frame):
@@ -1419,7 +1426,7 @@ def generate_ascii_model(meshes, morphs,
 
     faces_string, nfaces = generate_faces(normals, uv_layers, colors, meshes, option_normals, option_colors, option_uv_coords, option_materials, option_faces)
 
-    bones_string, nbone = generate_bones(option_bones, flipyz)
+    bones_string, nbone = generate_bones(meshes, option_bones, flipyz)
     indices_string, weights_string = generate_indices_and_weights(meshes, option_skinning)
 
     materials_string = ",\n\n".join(materials)
