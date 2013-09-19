@@ -760,10 +760,10 @@ def generate_bones(meshes, option_bones, flipyz):
         pos, rot, scl = bone_matrix.decompose()
 
         if flipyz:
-            joint = TEMPLATE_BONE % (bone_index, armature_bone.name, pos.x, pos.z, -pos.y, rot.x, rot.z, -rot.y, rot.w, scl.x, scl.z, -scl.y)
+            joint = TEMPLATE_BONE % (bone_index, armature_bone.name, pos.x, pos.z, -pos.y, rot.x, rot.z, -rot.y, rot.w, scl.x, scl.z, scl.y)
             hierarchy.append(joint)
         else:
-            joint = TEMPLATE_BONE % (bone_index, armature_bone.name, pos.x, pos.y,  pos.z, rot.x, rot.y,  rot.z, rot.w, scl.x, scl.y,  scl.z)
+            joint = TEMPLATE_BONE % (bone_index, armature_bone.name, pos.x, pos.y,  pos.z, rot.x, rot.y,  rot.z, rot.w, scl.x, scl.y, scl.z)
             hierarchy.append(joint)
 
     bones_string = ",".join(hierarchy)
@@ -872,9 +872,6 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
         return "", 0
     armature_matrix = armature_object.matrix_world
 
-    parents = []
-    parent_index = -1
-
     fps = bpy.data.scenes[0].render.fps
 
     end_frame = action.frame_range[1]
@@ -884,98 +881,118 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
 
     used_frames = int(frame_length / option_frame_step) + 1
 
-    TEMPLATE_KEYFRAME_FULL  = '{"time":%g,"pos":[%g,%g,%g],"rot":[%g,%g,%g,%g],"scl":[1,1,1]}'
-    TEMPLATE_KEYFRAME       = '{"time":%g,"pos":[%g,%g,%g],"rot":[%g,%g,%g,%g]}'
-    TEMPLATE_KEYFRAME_POS   = '{"time":%g,"pos":[%g,%g,%g]}'
-    TEMPLATE_KEYFRAME_ROT   = '{"time":%g,"rot":[%g,%g,%g,%g]}'
+    TEMPLATE_KEYFRAME_FULL  = '{"time":%g,"pos":[%g,%g,%g],"rot":[%g,%g,%g,%g],"scl":[%g,%g,%g]}'
+    TEMPLATE_KEYFRAME_BEGIN = '{"time":%g'
+    TEMPLATE_KEYFRAME_END   = '}'
+    TEMPLATE_KEYFRAME_POS   = ',"pos":[%g,%g,%g]'
+    TEMPLATE_KEYFRAME_ROT   = ',"rot":[%g,%g,%g,%g]'
+    TEMPLATE_KEYFRAME_SCL   = ',"scl":[%g,%g,%g]'
 
+    keys = []
+    channels_location = []
+    channels_quaternion = []
+    channels_euler = []
+    channels_scale = []
+    
+    # Precompute per-bone data
     for pose_bone in armature_object.pose.bones:
-
         armature_bone = pose_bone.bone
-        keys = []
+        keys.append([])
+        channels_location.append(   find_channels(action, armature_bone, "location"))
+        channels_quaternion.append( find_channels(action, armature_bone, "rotation_quaternion"))
+        channels_euler.append(      find_channels(action, armature_bone, "rotation_euler"))
+        channels_scale.append(      find_channels(action, armature_bone, "scale"))
 
-        channels_location    = find_channels(action, armature_bone, "location")
-        channels_quaternion  = find_channels(action, armature_bone, "rotation_quaternion")
-        channels_euler       = find_channels(action, armature_bone, "rotation_euler")
-        channels_scale       = find_channels(action, armature_bone, "scale")
+    # Process all frames
+    for frame_i in range(0, used_frames):
 
-        for frame_i in range(0, used_frames):
+        print("Processing frame %d/%d" % (frame_i, used_frames))
+        # Compute the index of the current frame (snap the last index to the end)
+        frame = start_frame + frame_i * option_frame_step
+        if frame_i == used_frames-1:
+            frame = end_frame
 
-            # Compute the index of the current frame (snap the last index to the end)
-            frame = start_frame + frame_i * option_frame_step
-            if frame_i == used_frames-1:
-                frame = end_frame
+        # Compute the time of the frame
+        if option_frame_index_as_time:
+            time = frame - start_frame
+        else:
+            time = (frame - start_frame) / fps
 
-            # Compute the time of the frame
-            if option_frame_index_as_time:
-                time = frame - start_frame
-            else:
-                time = (frame - start_frame) / fps
+        # Let blender compute the pose bone transformations
+        bpy.data.scenes[0].frame_set(frame)
 
-            bpy.data.scenes[0].frame_set(frame)
+        # Process all bones for the current frame
+        bone_index = 0
+        for pose_bone in armature_object.pose.bones:
 
-            if pose_bone.parent is None:
+            # Extract the bone transformations
+            if pose_bone.parent == None:
                 bone_matrix = armature_matrix * pose_bone.matrix
-                bone_index = -1
             else:
                 parent_matrix = armature_matrix * pose_bone.parent.matrix
                 bone_matrix = armature_matrix * pose_bone.matrix
                 bone_matrix = parent_matrix.inverted() * bone_matrix
             pos, rot, scl = bone_matrix.decompose()
-            if frame_i == 0:
-                print("bone: %s" % pose_bone.name)
-                print("pose_bone.matrix: \n%s" % pose_bone.matrix)
-                print("bone_matrix: \n%s" % bone_matrix)
-                print("rot: \n%s" % rot)
-            pchange = True
-            rchange = True
-            #pos, pchange = position(pose_bone, frame, action, armature_matrix, channels_location)
-            #rot, rchange = rotation(pose_bone, frame, action, armature_matrix, channels_quaternion, channels_euler)
+
+            pchange = True # TODO
+            rchange = True # TODO
+            schange = True # TODO
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
                 rx, ry, rz, rw = rot.x, rot.z, -rot.y, rot.w
+                sx, sy, sz = scl.x, scl.z, scl.y
             else:
                 px, py, pz = pos.x, pos.y, pos.z
                 rx, ry, rz, rw = rot.x, rot.y, rot.z, rot.w
+                sx, sy, sz = scl.x, scl.y, scl.z
 
             # START-FRAME: needs pos, rot and scl attributes (required frame)
 
             if frame == start_frame:
 
-                keyframe = TEMPLATE_KEYFRAME_FULL % (time, px, py, pz, rx, ry, rz, rw)
-                keys.append(keyframe)
+                keyframe = TEMPLATE_KEYFRAME_FULL % (time, px, py, pz, rx, ry, rz, rw, sx, sy, sz)
+                keys[bone_index].append(keyframe)
 
             # END-FRAME: needs pos, rot and scl attributes with animation length (required frame)
 
             elif frame == end_frame:
 
-                keyframe = TEMPLATE_KEYFRAME_FULL % (time, px, py, pz, rx, ry, rz, rw)
-                keys.append(keyframe)
+                keyframe = TEMPLATE_KEYFRAME_FULL % (time, px, py, pz, rx, ry, rz, rw, sx, sy, sz)
+                keys[bone_index].append(keyframe)
 
             # MIDDLE-FRAME: needs only one of the attributes, can be an empty frame (optional frame)
 
             elif pchange == True or rchange == True:
 
-                if pchange == True and rchange == True:
-                    keyframe = TEMPLATE_KEYFRAME % (time, px, py, pz, rx, ry, rz, rw)
-                elif pchange == True:
-                    keyframe = TEMPLATE_KEYFRAME_POS % (time, px, py, pz)
-                elif rchange == True:
-                    keyframe = TEMPLATE_KEYFRAME_ROT % (time, rx, ry, rz, rw)
+                keyframe = TEMPLATE_KEYFRAME_BEGIN % time
+                if pchange == True:
+                    keyframe = keyframe + TEMPLATE_KEYFRAME_POS % (px, py, pz)
+                if rchange == True:
+                    keyframe = keyframe + TEMPLATE_KEYFRAME_ROT % (rx, ry, rz, rw)
+                if schange == True:
+                    keyframe = keyframe + TEMPLATE_KEYFRAME_SCL % (sx, sy, sz)
+                keyframe = keyframe + TEMPLATE_KEYFRAME_END
 
-                keys.append(keyframe)
+                keys[bone_index].append(keyframe)
+            bone_index += 1
 
-        keys_string = ",".join(keys)
+    # Gather data
+    parents = []
+    bone_index = 0
+    for pose_bone in armature_object.pose.bones:
+        keys_string = ",".join(keys[bone_index])
+        parent_index = bone_index - 1 # WTF? Also, this property is not used by three.js
         parent = '{"parent":%d,"keys":[%s]}' % (parent_index, keys_string)
-        parent_index += 1
+        bone_index += 1
         parents.append(parent)
-
     hierarchy_string = ",".join(parents)
+
     if option_frame_index_as_time:
         length = frame_length
     else:
         length = frame_length / fps
+
     animation_string = '"name":"%s","fps":%d,"length":%g,"hierarchy":[%s]' % (action.name, fps, length, hierarchy_string)
 
     return animation_string
