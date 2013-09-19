@@ -909,8 +909,8 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
             else:
                 time = (frame - start_frame) / fps
 
-            pos, pchange = position(armature_bone, frame, action, armatureMat, channels_location)
-            rot, rchange = rotation(armature_bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler)
+            pos, pchange = position(pose_bone, frame, action, armatureMat, channels_location)
+            rot, rchange = rotation(pose_bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
@@ -1019,7 +1019,9 @@ def handle_position_channel(channel, frame, position):
 
     return change
 
-def position(bone, frame, action, armatureMatrix, channels_position):
+def position(pose_bone, frame, action, armatureMatrix, channels_position):
+
+    armature_bone = pose_bone.bone
 
     # Position (in bone space, relative to bone rest position)
     position = mathutils.Vector((0,0,0))
@@ -1031,20 +1033,20 @@ def position(bone, frame, action, armatureMatrix, channels_position):
         change = change or hasChanged
 
     # Position (in armature space, relative to bone position)
-    position = position * bone.matrix_local.inverted()
+    position = position * armature_bone.matrix_local.inverted()
 
     # Position (in armature space)
-    position = bone.head_local + position
+    position = armature_bone.head_local + position
 
     # Position (in world space)
     position = armatureMatrix * position
 
     # Position of the parent (in world space)
-    if bone.parent == None:
+    if armature_bone.parent == None:
         parent_position = mathutils.Vector((0,0,0))
     else:
-        parent = bone.parent
-        parent_position = armatureMatrix * bone.parent.head_local
+        parent = armature_bone.parent
+        parent_position = armatureMatrix * armature_bone.parent.head_local
 
     # Position (in world space, relative to parent)
     relative_position = position - parent_position
@@ -1098,13 +1100,16 @@ def handle_rotation_channel_euler(channel, frame, rotation):
 
     return change
 
-def rotation(bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler):
+def rotation(pose_bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler):
 
-    # TODO: calculate rotation also from rotation_euler channels
+    armature_bone = pose_bone.bone
 
     rotation_quaternion = mathutils.Quaternion((0,0,0,1))
     change_quaternion = False
-    rotation_euler = mathutils.Euler((0,0,0), 'XYZ')
+    rotation_mode = pose_bone.rotation_mode
+    if rotation_mode in ['QUATERNION', 'AXIS_ANGLE']:
+        rotation_mode = 'XYZ'
+    rotation_euler = mathutils.Euler((0,0,0), rotation_mode)
     change_euler = False
 
     # Handle all quaternion channels
@@ -1124,7 +1129,7 @@ def rotation(bone, frame, action, armatureQuaternion, channels_quaternion, chann
 
     # Rotate from bone space to armature space
     if change_quaternion:
-        boneMatrix = bone.matrix_local.inverted()
+        boneMatrix = armature_bone.matrix_local.inverted()
         rotation_quaternion.axis.rotate(boneMatrix)
 
     # Rotate from armature space to world space
