@@ -910,7 +910,7 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
                 time = (frame - start_frame) / fps
 
             pos, pchange = position(pose_bone, frame, action, armatureMat, channels_location)
-            rot, rchange = rotation(pose_bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler)
+            rot, rchange = rotation(pose_bone, frame, action, armatureMat, channels_quaternion, channels_euler)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
@@ -1046,7 +1046,7 @@ def position(pose_bone, frame, action, armatureMatrix, channels_position):
         parent_position = mathutils.Vector((0,0,0))
     else:
         parent = armature_bone.parent
-        parent_position = armatureMatrix * armature_bone.parent.head_local
+        parent_position = armatureMatrix * parent.head_local
 
     # Position (in world space, relative to parent)
     relative_position = position - parent_position
@@ -1100,7 +1100,7 @@ def handle_rotation_channel_euler(channel, frame, rotation):
 
     return change
 
-def rotation(pose_bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler):
+def rotation(pose_bone, frame, action, armatureMatrix, channels_quaternion, channels_euler):
 
     armature_bone = pose_bone.bone
 
@@ -1127,15 +1127,18 @@ def rotation(pose_bone, frame, action, armatureQuaternion, channels_quaternion, 
         rotation_quaternion = rotation_euler.to_quaternion()
         change_quaternion = True
 
-    # Rotate from bone space to armature space
-    if change_quaternion:
-        boneMatrix = armature_bone.matrix_local.inverted()
-        rotation_quaternion.axis.rotate(boneMatrix)
+    # Rotation (in world space)
+    bone_matrix = armatureMatrix * armature_bone.matrix_local.inverted()
+    rotation_quaternion.rotate(bone_matrix.to_quaternion())
+    
+    # Rotation of the parent (in world space)
+    parent_quaternion = mathutils.Quaternion((0,0,0,1))
+    if not armature_bone.parent is None:
+        parent = armature_bone.parent
+        parent_matrix = armatureMatrix * parent.matrix_local.inverted()
+        parent_quaternion.rotate(parent_matrix.to_quaternion())
 
-    # Rotate from armature space to world space
-    if change_quaternion:
-        rotation_quaternion.axis.rotate(armatureQuaternion)
-
+    rotation_quaternion = rotation_quaternion.rotation_difference(parent_quaternion)
     return rotation_quaternion, change_quaternion
 
 # #####################################################
