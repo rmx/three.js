@@ -890,18 +890,17 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
 
     keys = []
     channels_location = []
-    channels_quaternion = []
-    channels_euler = []
+    channels_rotation = []
     channels_scale = []
     
     # Precompute per-bone data
     for pose_bone in armature_object.pose.bones:
         armature_bone = pose_bone.bone
         keys.append([])
-        channels_location.append(   find_channels(action, armature_bone, "location"))
-        channels_quaternion.append( find_channels(action, armature_bone, "rotation_quaternion"))
-        channels_euler.append(      find_channels(action, armature_bone, "rotation_euler"))
-        channels_scale.append(      find_channels(action, armature_bone, "scale"))
+        channels_location.append(  find_channels(action, armature_bone, "location"))
+        channels_rotation.append(  find_channels(action, armature_bone, "rotation_quaternion"))
+        channels_rotation.append(  find_channels(action, armature_bone, "rotation_euler"))
+        channels_scale.append(     find_channels(action, armature_bone, "scale"))
 
     # Process all frames
     for frame_i in range(0, used_frames):
@@ -926,7 +925,7 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
         for pose_bone in armature_object.pose.bones:
 
             # Extract the bone transformations
-            if pose_bone.parent == None:
+            if pose_bone.parent is None:
                 bone_matrix = armature_matrix * pose_bone.matrix
             else:
                 parent_matrix = armature_matrix * pose_bone.parent.matrix
@@ -934,9 +933,9 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
                 bone_matrix = parent_matrix.inverted() * bone_matrix
             pos, rot, scl = bone_matrix.decompose()
 
-            pchange = True # TODO
-            rchange = True # TODO
-            schange = True # TODO
+            pchange = True or has_keyframe_at(channels_location[bone_index], frame)
+            rchange = True or has_keyframe_at(channels_rotation[bone_index], frame)
+            schange = True or has_keyframe_at(channels_scale[bone_index], frame)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
@@ -995,6 +994,8 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
 
     animation_string = '"name":"%s","fps":%d,"length":%g,"hierarchy":[%s]' % (action.name, fps, length, hierarchy_string)
 
+    bpy.data.scenes[0].frame_set(start_frame)
+
     return animation_string
 
 def find_channels(action, bone, channel_type):
@@ -1034,6 +1035,12 @@ def find_keyframe_at(channel, frame):
         if keyframe.co[0] == frame:
             return keyframe
     return None
+
+def has_keyframe_at(channels, frame):
+    for channel in channels:
+        if not find_keyframe_at(channel, frame) is None:
+            return True
+    return False
 
 def handle_position_channel(channel, frame, position):
 
