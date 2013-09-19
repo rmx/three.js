@@ -702,19 +702,23 @@ def generate_uvs(uv_layers, option_uv_coords):
 # (only the first armature will exported)
 # ##############################################################################
 def get_armature():
-    if len(bpy.data.armatures) == 0:
-        print("Warning: no armatures in the scene")
-        return None, None
 
-    armature = bpy.data.armatures[0]
+    objects = []
+    armatures = []
 
-    # Someone please figure out a proper way to get the armature node
+    # Get a list of all objects that are affected by armatures
     for object in bpy.data.objects:
-        if object.type == 'ARMATURE':
-            return armature, object
+        armature = object.find_armature()
+        if not armature is None:
+            objects.append(object)
+            armatures.append(object)
 
-    print("Warning: no node of type 'ARMATURE' in the scene")
-    return None, None
+    # Return the first armature object (for now)
+    if len(objects) > 0:
+        return objects[0], armatures[0]
+    else:
+        print("Warning: no armature in the scene")
+        return None, None
 
 # ##############################################################################
 # Model exporter - bones
@@ -878,9 +882,14 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
     TEMPLATE_KEYFRAME_POS   = '{"time":%g,"pos":[%g,%g,%g]}'
     TEMPLATE_KEYFRAME_ROT   = '{"time":%g,"rot":[%g,%g,%g,%g]}'
 
-    for hierarchy in armature.bones:
+    for bone in armature.bones:
 
         keys = []
+        
+        channels_location    = find_channels(action, bone, "location")
+        channels_quaternion  = find_channels(action, bone, "quaternion")
+        channels_euler       = find_channels(action, bone, "euler")
+        channels_scale       = find_channels(action, bone, "scale")
 
         for frame_i in range(0, used_frames):
 
@@ -895,8 +904,8 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
             else:
                 time = (frame - start_frame) / fps
 
-            pos, pchange = position(hierarchy, frame, action, armatureMat)
-            rot, rchange = rotation(hierarchy, frame, action, armatureQuaternion)
+            pos, pchange = position(bone, frame, action, armatureMat, channels_location)
+            rot, rchange = rotation(bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
@@ -946,14 +955,49 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
 
     return animation_string
 
+def find_channels(action, bone_name, channel_type):
+    ngroups = len(action.groups)
+    result = []
+
+    # Variant 1: channels grouped by bone names
+    if ngroups > 0:
+
+        # Find the channel group for the given bone
+        group_index = -1
+        for i in range(ngroups):
+            if action.groups[i].name == bone_name:
+                group_index = i
+
+        # Get all desired channels in that group
+        if group_index > -1:
+            for channel in action.groups[index].channels:
+                if channel_type in channel.data_path:
+                    result.append(channel)
+
+    # Variant 2: no channel groups, bone names included in channel names
+    else:
+
+        bone_label = '"%s"' % bone_name
+
+        for channel in action.fcurves:
+            data_path = channel.data_path
+            if bone_label in data_path and channel_type in data_path:
+                result.append(channel)
+    return result
+
+def find_keyframe_at(channel, frame):
+    for keyframe in channel.keyframe_points:
+        if keyframe.co[0] == frame:
+            return keyframe
+    return None
+
 def handle_position_channel(channel, frame, position):
 
     change = False
 
     if channel.array_index in [0, 1, 2]:
-        for keyframe in channel.keyframe_points:
-            if keyframe.co[0] == frame:
-                change = True
+        keyframe = find_keyframe_at(channel, frame)
+        change = (not keyframe is None)
 
         value = channel.evaluate(frame)
 
@@ -968,37 +1012,16 @@ def handle_position_channel(channel, frame, position):
 
     return change
 
-def position(bone, frame, action, armatureMatrix):
+def position(bone, frame, action, armatureMatrix, channels_position):
 
     # Position (in bone space, relative to bone rest position)
     position = mathutils.Vector((0,0,0))
     change = False
 
-    ngroups = len(action.groups)
-
-    if ngroups > 0:
-
-        index = -1
-
-        for i in range(ngroups):
-            if action.groups[i].name == bone.name:
-                index = i
-
-        if index > -1:
-            for channel in action.groups[index].channels:
-                if "location" in channel.data_path:
-                    hasChanged = handle_position_channel(channel, frame, position)
-                    change = change or hasChanged
-
-    else:
-
-        bone_label = '"%s"' % bone.name
-
-        for channel in action.fcurves:
-            data_path = channel.data_path
-            if bone_label in data_path and "location" in data_path:
-                hasChanged = handle_position_channel(channel, frame, position)
-                change = change or hasChanged
+    # Handle all position channels
+    for channel in channels_position:
+        hasChanged = handle_position_channel(channel, frame, position)
+        change = change or hasChanged
 
     # Position (in armature space, relative to bone position)
     position = position * bone.matrix_local.inverted()
@@ -1027,9 +1050,8 @@ def handle_rotation_channel_quaternion(channel, frame, rotation):
 
     if channel.array_index in [0, 1, 2, 3]:
 
-        for keyframe in channel.keyframe_points:
-            if keyframe.co[0] == frame:
-                change = True
+        keyframe = find_keyframe_at(channel, frame)
+        change = (not keyframe is None)
 
         value = channel.evaluate(frame)
 
@@ -1053,9 +1075,8 @@ def handle_rotation_channel_euler(channel, frame, rotation):
 
     if channel.array_index in [0, 1, 2]:
 
-        for keyframe in channel.keyframe_points:
-            if keyframe.co[0] == frame:
-                change = True
+        keyframe = find_keyframe_at(channel, frame)
+        change = (not keyframe is None)
 
         value = channel.evaluate(frame)
 
@@ -1070,7 +1091,7 @@ def handle_rotation_channel_euler(channel, frame, rotation):
 
     return change
 
-def rotation(bone, frame, action, armatureQuaternion):
+def rotation(bone, frame, action, armatureQuaternion, channels_quaternion, channels_euler):
 
     # TODO: calculate rotation also from rotation_euler channels
 
@@ -1079,53 +1100,29 @@ def rotation(bone, frame, action, armatureQuaternion):
     rotation_euler = mathutils.Euler((0,0,0), 'XYZ')
     change_euler = False
 
-    ngroups = len(action.groups)
+    # Handle all quaternion channels
+    for channel in channels_quaternion:
+        hasChanged = handle_rotation_channel_quaternion(channel, frame, rotation_quaternion)
+        change_quaternion = change_quaternion or hasChanged
 
-    # animation grouped by bones
+    # Handle all euler channels
+    for channel in channels_euler:
+        hasChanged = handle_rotation_channel_euler(channel, frame, rotation_euler)
+        change_euler = change_euler or hasChanged
 
-    if ngroups > 0:
-
-        index = -1
-
-        for i in range(ngroups):
-            if action.groups[i].name == bone.name:
-                index = i
-
-        if index > -1:
-            for channel in action.groups[index].channels:
-                if "quaternion" in channel.data_path:
-                    hasChanged = handle_rotation_channel_quaternion(channel, frame, rotation_quaternion)
-                    change_quaternion = change_quaternion or hasChanged
-                elif "euler" in channel.data_path:
-                    hasChanged = handle_rotation_channel_euler(channel, frame, rotation_euler)
-                    change_euler = change_euler or hasChanged
-
-    # animation in raw fcurves
-
-    else:
-
-        bone_label = '"%s"' % bone.name
-
-        for channel in action.fcurves:
-            data_path = channel.data_path
-            if bone_label in data_path:
-                if "quaternion" in data_path:
-                    hasChanged = handle_rotation_channel_quaternion(channel, frame, rotation_quaternion)
-                    change_quaternion = change_quaternion or hasChanged
-                elif "euler" in data_path:
-                    hasChanged = handle_rotation_channel_euler(channel, frame, rotation_euler)
-                    change_euler = change_euler or hasChanged
-
+    # Convert euler to quaternion rotation
     if change_euler and not change_quaternion:
         rotation_quaternion = rotation_euler.to_quaternion()
         change_quaternion = True
-    elif change_quaternion:
-        # Rotate from bone space to armature space
+
+    # Rotate from bone space to armature space
+    if change_quaternion:
         boneMatrix = bone.matrix_local.inverted()
         rotation_quaternion.axis.rotate(boneMatrix)
 
     # Rotate from armature space to world space
-    rotation_quaternion.axis.rotate(armatureQuaternion)
+    if change_quaternion:
+        rotation_quaternion.axis.rotate(armatureQuaternion)
 
     return rotation_quaternion, change_quaternion
 
