@@ -735,32 +735,37 @@ def generate_bones(meshes, option_bones, flipyz):
     armature_matrix = armature_object.matrix_world
     pose_bones = armature_object.pose.bones
 
-    TEMPLATE_BONE = '{"parent":%d,"name":"%s","pos":[%g,%g,%g],"rotq":[0,0,0,1]}'
+    TEMPLATE_BONE = '{"parent":%d,"name":"%s","pos":[%g,%g,%g],"rotq":[%g,%g,%g,%g],"scl":[%g,%g,%g]}'
 
     for pose_bone in pose_bones:
         armature_bone = pose_bone.bone
         bonePos = armature_matrix * armature_bone.head_local
         boneIndex = None
-        if armature_bone.parent == None:
-            parentPos = mathutils.Vector((0,0,0))
-            boneIndex = -1
+
+        if armature_bone.parent is None:
+            bone_matrix = armature_matrix * armature_bone.matrix_local
+            bone_index = -1
         else:
-            parentPos = armature_matrix * armature_bone.parent.head_local
-            boneIndex = i = 0
+            parent_matrix = armature_matrix * armature_bone.parent.matrix_local
+            bone_matrix = armature_matrix * armature_bone.matrix_local
+            bone_matrix = parent_matrix.inverted() * bone_matrix
+
+            bone_index = i = 0
             for pose_parent in pose_bones:
                 armature_parent = pose_parent.bone
                 if armature_parent.name == armature_bone.parent.name:
-                    boneIndex = i
+                    bone_index = i
                 i += 1
 
-        pos = bonePos - parentPos
+        pos, rot, scl = bone_matrix.decompose()
+
         if flipyz:
-            joint = TEMPLATE_BONE % (boneIndex, armature_bone.name, pos.x, pos.z, -pos.y)
+            joint = TEMPLATE_BONE % (bone_index, armature_bone.name, pos.x, pos.z, -pos.y, rot.x, rot.z, -rot.y, rot.w, scl.x, scl.z, -scl.y)
             hierarchy.append(joint)
         else:
-            joint = TEMPLATE_BONE % (boneIndex, armature_bone.name, pos.x, pos.y, pos.z)
+            joint = TEMPLATE_BONE % (bone_index, armature_bone.name, pos.x, pos.y,  pos.z, rot.x, rot.y,  rot.z, rot.w, scl.x, scl.y,  scl.z)
             hierarchy.append(joint)
-                
+
     bones_string = ",".join(hierarchy)
 
     return bones_string, len(pose_bones)
@@ -865,9 +870,7 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
     armature_object = get_armature()
     if armature_object is None:
         return "", 0
-    armatureMat = armature_object.matrix_world
-    l,r,s = armatureMat.decompose()
-    armatureQuaternion = r
+    armature_matrix = armature_object.matrix_world
 
     parents = []
     parent_index = -1
@@ -909,8 +912,25 @@ def generate_animation(option_animation_skeletal, option_frame_step, flipyz, opt
             else:
                 time = (frame - start_frame) / fps
 
-            pos, pchange = position(pose_bone, frame, action, armatureMat, channels_location)
-            rot, rchange = rotation(pose_bone, frame, action, armatureMat, channels_quaternion, channels_euler)
+            bpy.data.scenes[0].frame_set(frame)
+
+            if pose_bone.parent is None:
+                bone_matrix = armature_matrix * pose_bone.matrix
+                bone_index = -1
+            else:
+                parent_matrix = armature_matrix * pose_bone.parent.matrix
+                bone_matrix = armature_matrix * pose_bone.matrix
+                bone_matrix = parent_matrix.inverted() * bone_matrix
+            pos, rot, scl = bone_matrix.decompose()
+            if frame_i == 0:
+                print("bone: %s" % pose_bone.name)
+                print("pose_bone.matrix: \n%s" % pose_bone.matrix)
+                print("bone_matrix: \n%s" % bone_matrix)
+                print("rot: \n%s" % rot)
+            pchange = True
+            rchange = True
+            #pos, pchange = position(pose_bone, frame, action, armature_matrix, channels_location)
+            #rot, rchange = rotation(pose_bone, frame, action, armature_matrix, channels_quaternion, channels_euler)
 
             if flipyz:
                 px, py, pz = pos.x, pos.z, -pos.y
